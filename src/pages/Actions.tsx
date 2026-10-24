@@ -4,7 +4,7 @@ import { handoff } from '../handoff';
 import type { ActionValidation, Failure, PolicyReason, PolicyStatus, ProposedAction } from '../api/types';
 import { Badge, Banner, Empty, PageHeader, fmtTime, short } from '../ui';
 
-const STATUS: Record<PolicyStatus, [string, 'ok' | 'bad' | 'warn']> = { allow: ['Allowed by policy', 'ok'], deny: ['Denied', 'bad'], require_approval: ['Needs approval', 'warn'] };
+const STATUS: Record<PolicyStatus, [string, 'ok' | 'bad' | 'warn' | 'info']> = { allow: ['Allowed by policy', 'ok'], deny: ['Denied', 'bad'], require_approval: ['Needs approval', 'info'] };
 const REASON: Record<PolicyReason, string> = {
   allowed: 'Policy permits this action.', unknown_tool: 'No tool with this name is registered.', target_not_allowlisted: 'The target is not on the allowlist.',
   permission_missing: 'The required permission has not been granted.', invalid_arguments: 'The arguments do not match what the tool accepts.',
@@ -40,14 +40,25 @@ export default function Actions() {
     setLatest(entry); setHistory((h) => [entry, ...h]);
   }
 
-  const sim = api.mode === 'mock';
+  const sampleAction = (name: 'notes.delete' | 'notes.update' | 'github.read_workflow_runs') => {
+    setTool(name);
+    setTarget(name.startsWith('github.') ? 'octo-org/sample-repo' : 'note_001');
+    setPurpose(name === 'github.read_workflow_runs' ? 'Inspect recent workflow runs.' : `Review a proposed ${name.slice('notes.'.length)} operation.`);
+    setArgs(name === 'notes.update' ? JSON.stringify({ content: 'Updated note content' }, null, 2) : '{}');
+  };
   return (
     <div className="page">
-      <PageHeader title="Actions & approvals" sub="Propose an action and see what policy says. Validation checks policy only." />
+      <PageHeader title="Actions & approvals" sub="Propose an action and see what policy says. Validation checks policy only."><Badge tone="info">POLICY ONLY · NO EXECUTION</Badge></PageHeader>
 
       <section className="panel" aria-labelledby="h-prop">
         <header><h2 id="h-prop">Propose an action</h2></header>
         <div className="body form">
+          <div className="full"><Banner tone="warn" title="Validation is not execution">POST /api/v1/actions/validate evaluates policy only. It does not approve, schedule, or run the proposal. GitHub and Calendar are read-only.</Banner></div>
+          <div className="field full"><span className="field-label">MVP proposal examples</span><div className="proposal-choices">
+            <button className="btn" type="button" onClick={() => sampleAction('notes.delete')}>notes.delete</button>
+            <button className="btn" type="button" onClick={() => sampleAction('notes.update')}>notes.update</button>
+            <button className="btn" type="button" onClick={() => sampleAction('github.read_workflow_runs')}>github.read_workflow_runs</button>
+          </div></div>
           <div className="field"><label htmlFor="tool">Tool</label><input id="tool" value={tool} onChange={(e) => setTool(e.target.value)} placeholder="notes.delete" autoComplete="off" /></div>
           <div className="field"><label htmlFor="target">Target</label><input id="target" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="note_001" autoComplete="off" /></div>
           <div className="field full"><label htmlFor="purpose">Purpose</label><input id="purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={1000} placeholder="Why this action is needed" /></div>
@@ -76,7 +87,7 @@ export default function Actions() {
               <span>{REASON[latest.result.reason]}</span>
             </div>
             {latest.result.action_hash && <div className="muted">Action hash <code>{short(latest.result.action_hash, 20)}</code></div>}
-            <Banner>Validation only. This action has not been approved and has not been run.</Banner>
+            <Banner tone="warn">Validation only. This action has not been approved and has not been run.</Banner>
           </div>
         </section>
       )}

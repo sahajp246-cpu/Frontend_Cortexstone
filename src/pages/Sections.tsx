@@ -20,11 +20,11 @@ export function Section({ feature, title, sub, paths, note }: { feature: Feature
 export function SettingsPage() {
   const { snap } = useHealth();
   const rows: [string, React.ReactNode][] = [
-    ['Data mode', api.mode === 'live' ? <Badge tone="ok">Live</Badge> : <Badge tone="warn">Demo · simulated</Badge>],
+    ['Data mode', api.mode === 'live' ? 'Live backend' : 'Sandbox · simulated API'],
     ['API base URL', API_BASE ? <code>{API_BASE}</code> : <span>Same origin (Vite dev proxy to the backend)</span>],
     ['Connection', api.mode === 'mock' ? <span className="muted">Not used in demo mode</span> : <Badge tone={overall(snap) === 'ok' ? 'ok' : overall(snap) === 'checking' ? 'neutral' : 'bad'}>{overall(snap)}</Badge>],
-    ['Signed in as', <span className="muted">Unknown. No <code>/api/v1/me</code> endpoint is registered.</span>],
-    ['Theme', <span>Dark. Colors are semantic CSS variables, so a light theme is a token swap.</span>],
+    ['Signed in as', <span className="muted">{snap?.principal?.authenticated ? `${snap.principal.display_name} · ${snap.principal.id}` : 'No authenticated principal returned by /api/v1/me.'}</span>],
+    ['Theme', <span>Warm Obsidian with Signal Vermilion accents.</span>],
   ];
   return (
     <div className="page">

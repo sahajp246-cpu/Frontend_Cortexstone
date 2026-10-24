@@ -1,8 +1,8 @@
-import { useEffect, useState, type ComponentType } from 'react';
-import { Brain, FileCheck2, LayoutDashboard, Menu, MessageSquare, PanelLeftClose, PanelLeftOpen, Plug, Settings as Cog, ShieldAlert, Workflow } from 'lucide-react';
-import { HealthProvider, api, overall, useHealth } from './app-context';
+import { useEffect, useMemo, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Brain, FileCheck2, LayoutDashboard, Menu, MessageSquare, PanelLeftClose, PanelLeftOpen, Plug, Search, Settings as Cog, ShieldAlert, Workflow } from 'lucide-react';
+import { HealthProvider, api, useHealth } from './app-context';
 import type { Feature } from './api/types';
-import { Badge } from './ui';
+import { Modal } from './dialog';
 import Overview from './pages/Overview';
 import Chat from './pages/Chat';
 import Actions from './pages/Actions';
@@ -15,7 +15,7 @@ import { config } from './config';
 import { Section, SettingsPage } from './pages/Sections';
 
 const NAV: { id: string; label: string; icon: typeof Cog; feature?: Feature }[] = [
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard, feature: 'overview' },
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'chat', label: 'Chat', icon: MessageSquare, feature: 'chat' },
   { id: 'memory', label: 'Memory', icon: Brain, feature: 'memory' },
   { id: 'jobs', label: 'Jobs & Workflows', icon: Workflow, feature: 'jobs' },
@@ -26,20 +26,19 @@ const NAV: { id: string; label: string; icon: typeof Cog; feature?: Feature }[] 
 ];
 
 const useRoute = () => {
-  const get = () => location.hash.replace(/^#\//, '') || 'overview';
+  const get = () => (location.hash.replace(/^#\//, '').split('?')[0] || 'overview');
   const [r, setR] = useState(get);
   useEffect(() => { const f = () => setR(get()); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
   return r;
 };
 
 const UNAVAILABLE: Record<string, { feature: Feature; title: string; sub: string; paths: string[]; note: string; page: ComponentType }> = {
-  memory: { feature: 'memory', title: 'Memory', sub: 'Search what Cortexstone remembers, see where it came from, and forget it.', paths: ['GET /api/v1/memories', 'POST /api/v1/memories', 'DELETE /api/v1/memories/{id}'], note: 'The memory routes are not registered. Provenance must distinguish stated from inferred facts.', page: Memory },
   jobs: { feature: 'jobs', title: 'Jobs & Workflows', sub: 'Track background work, outcomes, and retries.', paths: ['GET /api/v1/jobs', 'GET /api/v1/jobs/{id}'], note: 'No job tables or routes exist yet.', page: Jobs },
   guardian: { feature: 'guardian', title: 'Guardian', sub: 'Security findings with severity and affected resources.', paths: ['GET /api/v1/findings', 'POST /api/v1/guardian/scan'], note: 'Scanning is not available. Guardian has no backend code beyond its README.', page: Guardian },
-  integrations: { feature: 'integrations', title: 'Integrations', sub: 'GitHub and Google Calendar (read-only) and built-in Cortexstone Notes.', paths: ['GET /api/v1/connectors', 'POST /api/v1/connectors/{provider}/connect', 'GET /api/v1/notes'], note: 'Connector credentials stay server-side. The dashboard will only show connection state and capabilities.', page: Integrations },
 };
 
 function Page({ route }: { route: string }) {
+  if (route === 'integrations') return <Integrations />;
   const u = UNAVAILABLE[route];
   if (u) return api.support[u.feature] === 'unavailable' ? <Section {...u} /> : <u.page />;
   switch (route) {
@@ -55,21 +54,49 @@ function Shell() {
   const { snap } = useHealth();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('cs.collapsed') === '1'; } catch { return false; } });
   const [open, setOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [paletteIndex, setPaletteIndex] = useState(0);
   useEffect(() => { setOpen(false); }, [route]);
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      }
+    };
+    addEventListener('keydown', onKeyDown);
+    return () => removeEventListener('keydown', onKeyDown);
+  }, []);
+  useEffect(() => { if (!paletteOpen) setPaletteQuery(''); }, [paletteOpen]);
   const toggle = () => setCollapsed((c) => { try { localStorage.setItem('cs.collapsed', c ? '0' : '1'); } catch { /* ignore */ } return !c; });
-  const h = overall(snap);
-  const healthTone = { checking: 'neutral', ok: 'ok', degraded: 'warn', unreachable: 'bad' }[h] as 'neutral' | 'ok' | 'warn' | 'bad';
-  const healthText = api.mode === 'mock' ? 'Simulated health' : { checking: 'Checking API…', ok: 'API healthy', degraded: 'API degraded', unreachable: 'API unreachable' }[h];
+  const matches = useMemo(() => NAV.filter(({ label, id }) => `${label} ${id}`.toLowerCase().includes(paletteQuery.trim().toLowerCase())), [paletteQuery]);
+  useEffect(() => { setPaletteIndex(0); }, [paletteQuery]);
+  const navigateTo = (id: string) => { location.hash = `#/${id}`; setPaletteOpen(false); };
+  const onPaletteKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown' && matches.length) { event.preventDefault(); setPaletteIndex((index) => (index + 1) % matches.length); }
+    if (event.key === 'ArrowUp' && matches.length) { event.preventDefault(); setPaletteIndex((index) => (index + matches.length - 1) % matches.length); }
+    if (event.key === 'Enter' && matches[paletteIndex]) { event.preventDefault(); navigateTo(matches[paletteIndex].id); }
+  };
+  const health = snap?.health;
+  const ready = snap?.ready;
+  const latency = health?.ms ?? ready?.ms;
 
   return (
     <div className={`app${collapsed ? ' collapsed' : ''}${open ? ' open' : ''}`}>
       <header className="top">
         <button className="btn icon only-m" aria-label="Open navigation" onClick={() => setOpen(true)}><Menu size={18} /></button>
         <div className="brand only-m"><span className="mark" aria-hidden><i /><i /><i /></span>Cortexstone</div>
-        <span className="muted hide-m">Remember · Act · Protect</span>
+        <button className="command-trigger hide-m" onClick={() => setPaletteOpen(true)} aria-keyshortcuts="Control+K Meta+K"><Search size={15} /><span>Jump to…</span><kbd>⌘ K / Ctrl K</kbd></button>
         <span className="grow" />
-        <span title="Backend connectivity"><Badge tone={healthTone}><i className="pip" aria-hidden /><span className="t">{healthText}</span></Badge></span>
-        <span role="status">{api.mode === 'live' ? <Badge tone="ok">Live</Badge> : <Badge tone="warn"><span className="hide-m">Demo · simulated data</span><span className="only-m">Demo</span></Badge>}</span>
+        <div className={`telemetry-capsule ${api.mode === 'live' ? 'live' : 'sandbox'}`} role="status" aria-label={api.mode === 'live' ? 'Live backend telemetry' : 'Sandbox simulated API telemetry'}>
+          <span className="telemetry-label">{api.mode === 'live' ? '● LIVE BACKEND · /api/v1' : '◈ SANDBOX · SIMULATED API'}</span>
+          <span className={`telemetry-pulse ${health?.state ?? 'checking'}`} />
+          <span className="telemetry-bars" aria-label={latency === undefined ? 'Latency unavailable' : `Health latency ${latency} milliseconds`}>
+            {[health?.ms, ready?.ms, snap?.principalCheck.ms].map((value, index) => <i key={index} style={{ height: `${value === undefined ? 3 : Math.max(3, Math.min(13, 3 + value / 5))}px` }} />)}
+          </span>
+          <span className="telemetry-ms mono">{latency === undefined ? '— ms' : `${latency} ms`}</span>
+        </div>
       </header>
       <div className="scrim" onClick={() => setOpen(false)} />
       <nav className="side" aria-label="Primary">
@@ -89,6 +116,17 @@ function Shell() {
         </button>
       </nav>
       <main className="main" id="main"><Page route={route} /></main>
+      <Modal open={paletteOpen} title="Jump to" onClose={() => setPaletteOpen(false)}>
+        <div className="palette-search"><Search size={16} /><input autoFocus value={paletteQuery} onChange={(event) => setPaletteQuery(event.target.value)} onKeyDown={onPaletteKeyDown} placeholder="Search pages…" aria-label="Search pages" /></div>
+        <nav className="palette-results" aria-label="Page shortcuts">
+          {matches.map(({ id, label, icon: Icon }, index) => (
+            <a key={id} href={`#/${id}`} className={`palette-result ${paletteIndex === index ? 'selected' : ''}`} onClick={() => setPaletteOpen(false)} aria-current={route === id ? 'page' : undefined}>
+              <Icon size={16} /><span>{label}</span><kbd>↵</kbd>
+            </a>
+          ))}
+          {matches.length === 0 && <p className="muted palette-empty">No matching pages.</p>}
+        </nav>
+      </Modal>
     </div>
   );
 }

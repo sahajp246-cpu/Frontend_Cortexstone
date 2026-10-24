@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, HTMLAttributes, MouseEvent, ReactNode } from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import type { Support } from './api/types';
 
@@ -7,8 +7,21 @@ export const Badge = ({ tone = 'neutral', children }: { tone?: Tone; children: R
 
 export function SupportBadge({ s }: { s: Support }) {
   if (s === 'live') return <Badge tone="ok">Live API</Badge>;
-  if (s === 'simulated') return <Badge tone="warn">Simulated</Badge>;
+  if (s === 'simulated') return <span className="muted">Demo data</span>;
   return <Badge>Not available</Badge>;
+}
+
+export function BentoCard({ className = '', style, onMouseMove, ...props }: HTMLAttributes<HTMLElement>) {
+  const trackPointer = (event: MouseEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pointerStyle = {
+      '--mouse-x': `${event.clientX - rect.left}px`,
+      '--mouse-y': `${event.clientY - rect.top}px`,
+    } as CSSProperties;
+    Object.assign(event.currentTarget.style, pointerStyle);
+    onMouseMove?.(event);
+  };
+  return <section {...props} className={`panel bento-card ${className}`.trim()} style={style} onMouseMove={trackPointer} />;
 }
 
 export function PageHeader({ title, sub, children }: { title: string; sub?: string; children?: ReactNode }) {

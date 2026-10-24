@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { parseConfig } from './config';
+import { API_PATHS, parseConfig } from './config';
 
 describe('parseConfig', () => {
+  it('pins health and identity probes to the backend contract', () => {
+    expect(API_PATHS).toMatchObject({ health: '/health', ready: '/ready', principal: '/api/v1/me' });
+    expect(Object.values(API_PATHS)).not.toContain('/health/live');
+    expect(Object.values(API_PATHS)).not.toContain('/health/ready');
+    expect(Object.values(API_PATHS)).not.toContain('/api/v1/health');
+  });
   it('defaults to mock with the dev proxy', () => expect(parseConfig({})).toEqual({ mode: 'mock', apiBase: '', error: null }));
   it('rejects unknown modes instead of guessing', () => expect(parseConfig({ VITE_DATA_MODE: 'prod' }).error).toMatch(/mock.*live/));
   it('allows https and localhost http only', () => {

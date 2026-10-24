@@ -7,14 +7,27 @@ import { Badge, Banner, PageHeader } from '../ui';
 
 interface Msg { id: string; role: 'user' | 'assistant'; text: string; actions?: ProposedAction[]; status?: 'sending' | 'failed'; error?: string }
 
+function promptFromHash() {
+  const query = location.hash.split('?')[1] ?? '';
+  return new URLSearchParams(query).get('prompt') ?? '';
+}
+
 export default function Chat() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(promptFromHash);
   const [busy, setBusy] = useState(false);
   const [conv, setConv] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const enabled = api.support.chat !== 'unavailable';
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [msgs, busy]);
+  useEffect(() => {
+    const onHashChange = () => {
+      const prompt = promptFromHash();
+      if (prompt) setDraft(prompt);
+    };
+    addEventListener('hashchange', onHashChange);
+    return () => removeEventListener('hashchange', onHashChange);
+  }, []);
 
   async function deliver(id: string, text: string) {
     setBusy(true);

@@ -16,7 +16,6 @@ export default function Guardian() {
   return (
     <div className="page">
       <PageHeader title="Guardian" sub="Security findings, by severity and the resource they affect.">
-        <Badge tone="warn">Simulated findings</Badge>
         <button className="btn" disabled aria-describedby="scan-note">Run scan</button>
       </PageHeader>
       <p id="scan-note" className="muted" style={{ marginTop: -12 }}>Scanning isn't available: Guardian has no backend yet. These findings are demonstration data, not results from your code.</p>

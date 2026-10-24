@@ -28,7 +28,7 @@ export default function Memory() {
 
   return (
     <div className="page">
-      <PageHeader title="Memory" sub="What Cortexstone remembers, where it came from, and how sure it is."><Badge tone="warn">Simulated data</Badge></PageHeader>
+      <PageHeader title="Memory" sub="What Cortexstone remembers, where it came from, and how sure it is." />
       <section className="panel" aria-label="Memories">
         <div className="toolbar">
           <div className="search"><label htmlFor="mq" className="sr">Search memories</label><input id="mq" type="search" placeholder="Search memories" value={q} onChange={(e) => setQ(e.target.value)} /></div>

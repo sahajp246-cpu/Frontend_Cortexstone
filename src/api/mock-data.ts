@@ -1,4 +1,4 @@
-import type { Connector, Finding, JobRecord, MemoryRecord } from './types';
+import type { Finding, JobRecord, MemoryRecord } from './types';
 
 const ago = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 
@@ -14,7 +14,7 @@ export const seedMemories = (): MemoryRecord[] => [
 export const seedJobs = (): JobRecord[] => [
   { id: 'j1', name: 'Morning brief', status: 'succeeded', startedAt: ago(26), durationS: 14, attempts: 1, outcome: 'Summarized 3 open pull requests and 2 calendar events.' },
   { id: 'j2', name: 'Sync GitHub issues', status: 'running', startedAt: ago(0.1), durationS: null, attempts: 1, outcome: 'In progress. No result yet.' },
-  { id: 'j3', name: 'Create issue: flaky CI test', status: 'awaiting_approval', startedAt: ago(1), durationS: null, attempts: 1, outcome: 'Validated by policy. Waiting for a person to approve this exact action.' },
+  { id: 'j3', name: 'Review workflow runs', status: 'awaiting_approval', startedAt: ago(1), durationS: null, attempts: 1, outcome: 'Policy validation only. No workflow action was executed.' },
   { id: 'j4', name: 'Refresh calendar cache', status: 'retry_wait', startedAt: ago(2), durationS: 31, attempts: 2, outcome: 'Provider timed out. Next retry is scheduled.' },
   { id: 'j5', name: 'Weekly memory review', status: 'failed', startedAt: ago(40), durationS: 9, attempts: 3, outcome: 'Failed after 3 attempts: the database was unavailable.' },
   { id: 'j6', name: 'Import notes', status: 'cancelled', startedAt: ago(60), durationS: 4, attempts: 1, outcome: 'Cancelled by you before any notes were imported.' },
@@ -26,10 +26,4 @@ export const seedFindings = (): Finding[] => [
   { id: 'f2', severity: 'high', title: 'Workflow runs untrusted pull request code with secrets', resource: 'octo-org/sample-repo · .github/workflows/ci.yml', detail: 'The workflow uses pull_request_target and checks out the PR head. Restrict permissions or avoid exposing secrets to forked code.', status: 'open', foundAt: ago(9) },
   { id: 'f3', severity: 'medium', title: 'Dependency with a known vulnerability', resource: 'octo-org/sample-repo · requirements.txt', detail: 'A pinned dependency has a published advisory. Upgrade to a patched release.', status: 'open', foundAt: ago(27) },
   { id: 'f4', severity: 'low', title: 'Broad token scope on connector', resource: 'Google Calendar connector', detail: 'The granted scopes exceed what read-only access needs. Reauthorize with the minimum scope.', status: 'resolved', foundAt: ago(80) },
-];
-
-export const seedConnectors = (): Connector[] => [
-  { id: 'github', name: 'GitHub', state: 'simulated', capabilities: ['Repositories', 'Issues', 'Pull requests', 'Workflow runs'], readOnly: true, account: 'octo-org (simulated)' },
-  { id: 'google_calendar', name: 'Google Calendar', state: 'simulated', capabilities: ['Events'], readOnly: true, account: 'you@example.com (simulated)' },
-  { id: 'notes', name: 'Cortexstone Notes', state: 'simulated', capabilities: ['Read', 'Create', 'Update', 'Delete'], readOnly: false },
 ];

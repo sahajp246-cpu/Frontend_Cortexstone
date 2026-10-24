@@ -30,19 +30,21 @@ Checks: `npm run typecheck` · `npm test` · `npm run build` · `npm audit`
 
 ```bash
 docker compose up --build            # repo root; API on :8000
-curl localhost:8000/health/live
+curl localhost:8000/health
 ```
 
 ## What is real
 
 | Section | Live mode | Mock mode |
 |---|---|---|
-| Health (`/health/live`, `/health/ready`, `/api/v1/health`) | Live | Simulated |
+| Health (`/health`, `/ready`, `/api/v1/me`) | Live | Simulated |
 | Actions: `POST /api/v1/actions/validate` | Live; the backend returns 503 until a trusted principal is configured | Simulated policy |
 | Overview approvals and activity | Not available (no endpoint) | Simulated |
 | Chat | Not available (no `/api/v1/chat` route) | Simulated |
-| Memory (list, filter, forget) | Not available (no routes) | Simulated, forget persists for the session |
-| Jobs, Guardian, Integrations | Not available (no routes) | Simulated; Guardian scan and connector changes are disabled with an explanation |
+| Memory (list, filter, forget) | Live (`/api/v1/memories`) | Simulated, forget persists for the session |
+| GitHub and Google Calendar | Read-only connector data and events | Simulated read-only data |
+| Cortexstone Notes | CRUD (`/api/v1/notes`) | Simulated CRUD, session-only |
+| Jobs, Guardian | Not available (no routes) | Simulated; Guardian scanning is disabled with an explanation |
 | Settings | Connection details | Mode details |
 
 ## Security notes

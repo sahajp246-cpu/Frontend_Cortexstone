@@ -1,4 +1,3 @@
-// Mirrors src/cortexstone/agent/schemas/actions.py and api/v1/schemas.py (verified against the code, not the draft contract).
 export type DataMode = 'mock' | 'live';
 export type PolicyStatus = 'allow' | 'deny' | 'require_approval';
 export type PolicyReason =
@@ -16,6 +15,7 @@ export interface ProposedAction {
   requested_at: string;
 }
 export interface ActionValidation { status: PolicyStatus; reason: PolicyReason; action_hash: string | null; risk: RiskLevel | null }
+export interface PolicyCheck { action: ProposedAction; result: ActionValidation; at: string }
 export interface ChatResponse { conversation_id: string | null; answer: string | null; proposed_actions: ProposedAction[] }
 
 export type FailureKind = 'unavailable' | 'unauthenticated' | 'forbidden' | 'invalid' | 'network' | 'server';
@@ -23,11 +23,15 @@ export interface Failure { ok: false; kind: FailureKind; message: string; status
 export type Result<T> = { ok: true; data: T } | Failure;
 
 export interface Probe { state: 'ok' | 'degraded' | 'unreachable'; detail?: string; ms?: number }
-export interface HealthSnapshot { health: Probe; ready: Probe; checkedAt: string; simulated: boolean }
-
-export interface PendingApproval { id: string; tool_name: string; target_ref: string; requested_at: string }
-export interface ActivityItem { id: string; text: string; at: string }
-export interface OverviewData { approvals: PendingApproval[]; activity: ActivityItem[] }
+export interface Principal { id: string; display_name: string; authenticated: boolean }
+export interface HealthSnapshot {
+  health: Probe;
+  ready: Probe;
+  principalCheck: Probe;
+  principal: Principal | null;
+  checkedAt: string;
+  simulated: boolean;
+}
 
 export type MemoryKind = 'fact' | 'episode' | 'skill';
 export interface MemoryRecord { id: string; content: string; kind: MemoryKind; source: string; inferred: boolean; confidence: number; createdAt: string }
@@ -35,9 +39,14 @@ export type JobStatus = 'queued' | 'running' | 'retry_wait' | 'awaiting_approval
 export interface JobRecord { id: string; name: string; status: JobStatus; startedAt: string; durationS: number | null; attempts: number; outcome: string }
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export interface Finding { id: string; severity: Severity; title: string; resource: string; detail: string; status: 'open' | 'resolved'; foundAt: string }
-export interface Connector { id: 'github' | 'google_calendar' | 'notes'; name: string; state: 'simulated'; capabilities: string[]; readOnly: boolean; account?: string }
+export interface GitHubRepository { full_name: string; name: string; owner: string; private?: boolean; html_url?: string }
+export interface GitHubIssue { number: number; title: string; state: string; html_url?: string; created_at?: string }
+export interface GitHubPullRequest extends GitHubIssue { draft?: boolean; head_ref?: string; base_ref?: string }
+export interface GitHubWorkflowRun { id: number | string; name: string; status: string; conclusion: string | null; created_at: string; html_url?: string }
+export interface CalendarEvent { id: string; summary: string; start: string; end: string; timezone: string }
+export interface Note { id: string; title: string; content: string; created_at: string; updated_at: string }
 
-export type Feature = 'health' | 'chat' | 'actions' | 'overview' | 'memory' | 'jobs' | 'guardian' | 'integrations';
+export type Feature = 'health' | 'chat' | 'actions' | 'memory' | 'jobs' | 'guardian' | 'integrations';
 export type Support = 'live' | 'simulated' | 'unavailable';
 
 export interface Api {
@@ -45,11 +54,19 @@ export interface Api {
   support: Record<Feature, Support>;
   health(): Promise<Result<HealthSnapshot>>;
   validateAction(action: ProposedAction): Promise<Result<ActionValidation>>;
+  recentPolicyChecks(): PolicyCheck[];
   sendChat(message: string, conversationId: string | null): Promise<Result<ChatResponse>>;
-  overview(): Promise<Result<OverviewData>>;
   listMemories(): Promise<Result<MemoryRecord[]>>;
   forgetMemory(id: string): Promise<Result<void>>;
   listJobs(): Promise<Result<JobRecord[]>>;
   listFindings(): Promise<Result<Finding[]>>;
-  listConnectors(): Promise<Result<Connector[]>>;
+  listGithubRepos(): Promise<Result<GitHubRepository[]>>;
+  listGithubIssues(repo: string): Promise<Result<GitHubIssue[]>>;
+  listGithubPulls(repo: string): Promise<Result<GitHubPullRequest[]>>;
+  listGithubRuns(repo: string): Promise<Result<GitHubWorkflowRun[]>>;
+  listCalendarEvents(start: string, end: string, timezone: string): Promise<Result<CalendarEvent[]>>;
+  listNotes(): Promise<Result<Note[]>>;
+  createNote(title: string, content: string): Promise<Result<Note>>;
+  updateNote(id: string, title: string, content: string): Promise<Result<Note>>;
+  deleteNote(id: string): Promise<Result<void>>;
 }

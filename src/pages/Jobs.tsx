@@ -18,7 +18,7 @@ export default function Jobs() {
   const rows = useMemo(() => (data ?? []).filter((j) => status === 'all' || j.status === status), [data, status]);
   return (
     <div className="page">
-      <PageHeader title="Jobs & workflows" sub="Background work, its outcome, and how many attempts it took."><Badge tone="warn">Simulated data</Badge></PageHeader>
+      <PageHeader title="Jobs & workflows" sub="Background work, its outcome, and how many attempts it took." />
       <section className="panel" aria-label="Jobs">
         <div className="toolbar">
           <label htmlFor="js" className="sr">Status</label>

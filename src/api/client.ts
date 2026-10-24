@@ -1,5 +1,10 @@
-import { seedConnectors, seedFindings, seedJobs, seedMemories } from './mock-data';
-import type { Api, DataMode, Failure, HealthSnapshot, Probe, ProposedAction, Result, ActionValidation, ChatResponse } from './types';
+import { seedFindings, seedJobs, seedMemories } from './mock-data';
+import type {
+  ActionValidation, Api, CalendarEvent, ChatResponse, DataMode, Failure, GitHubIssue,
+  GitHubPullRequest, GitHubRepository, GitHubWorkflowRun, HealthSnapshot, MemoryRecord, Note,
+  PolicyCheck, Principal, Probe, ProposedAction, Result,
+} from './types';
+import { API_PATHS } from '../config';
 
 const TIMEOUT_MS = 8000;
 
@@ -16,7 +21,7 @@ async function call<T>(base: string, path: string, init?: RequestInit): Promise<
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(base + path, { ...init, signal: ctl.signal, headers: { 'Content-Type': 'application/json' } });
+    const res = await fetch(base + path, { ...init, signal: ctl.signal, headers: { 'Content-Type': 'application/json', ...init?.headers } });
     const body: unknown = await res.json().catch(() => null);
     if (res.ok) return { ok: true, data: body as T };
     const env = body as { error?: { message?: unknown }; request_id?: unknown } | null;
@@ -35,8 +40,17 @@ const notRegistered = (what: string): Failure => ({
 });
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const hash = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+const repoPath = (repo: string) => repo.split('/').map(encodeURIComponent).join('/');
 
 export function createApi(mode: DataMode, base: string): Api {
+  const checks: PolicyCheck[] = [];
+  const recordCheck = (action: ProposedAction, result: ActionValidation) => {
+    checks.unshift({ action, result, at: new Date().toISOString() });
+    checks.splice(8);
+    return { ok: true, data: result } as const;
+  };
+  const recentPolicyChecks = () => checks.map((check) => ({ ...check, action: { ...check.action, arguments: { ...check.action.arguments } }, result: { ...check.result } }));
+
   if (mode === 'live') {
     const probe = async (path: string): Promise<Probe> => {
       const t = performance.now();
@@ -46,41 +60,90 @@ export function createApi(mode: DataMode, base: string): Api {
       if (r.kind === 'network') return { state: 'unreachable', detail: r.message };
       return { state: 'degraded', ms, detail: r.status === 503 ? 'Not ready: a required dependency is unavailable.' : r.message };
     };
+    const validateAction = async (action: ProposedAction) => {
+      const r = await call<ActionValidation>(base, API_PATHS.validateAction, { method: 'POST', body: JSON.stringify({ action }) });
+      return r.ok ? recordCheck(action, r.data) : r;
+    };
     return {
       mode,
-      support: { health: 'live', actions: 'live', chat: 'unavailable', overview: 'unavailable', memory: 'unavailable', jobs: 'unavailable', guardian: 'unavailable', integrations: 'unavailable' },
+      support: { health: 'live', actions: 'live', chat: 'unavailable', memory: 'live', jobs: 'unavailable', guardian: 'unavailable', integrations: 'live' },
       async health() {
-        const [health, ready] = await Promise.all([probe('/health'), probe('/ready')]);
-        return { ok: true, data: { health, ready, checkedAt: new Date().toISOString(), simulated: false } satisfies HealthSnapshot };
+        const [health, ready, me] = await Promise.all([
+          probe(API_PATHS.health), probe(API_PATHS.ready),
+          (async () => {
+            const t = performance.now();
+            const result = await call<Principal>(base, API_PATHS.principal);
+            return { result, ms: Math.round(performance.now() - t) };
+          })(),
+        ]);
+        const principalCheck: Probe = me.result.ok
+          ? { state: 'ok', ms: me.ms }
+          : me.result.kind === 'network'
+            ? { state: 'unreachable', detail: me.result.message }
+            : { state: 'degraded', ms: me.ms, detail: me.result.message };
+        return { ok: true, data: {
+          health, ready, principalCheck,
+          principal: me.result.ok ? me.result.data : null,
+          checkedAt: new Date().toISOString(), simulated: false,
+        } satisfies HealthSnapshot };
       },
-      validateAction: (action) => call<ActionValidation>(base, '/api/v1/actions/validate', { method: 'POST', body: JSON.stringify({ action }) }),
+      validateAction,
+      recentPolicyChecks,
       sendChat: async () => notRegistered('POST /api/v1/chat'),
-      overview: async () => notRegistered('An approvals/activity endpoint'),
-      listMemories: async () => notRegistered('GET /api/v1/memories'),
-      forgetMemory: async () => notRegistered('DELETE /api/v1/memories/{id}'),
+      listMemories: () => call<MemoryRecord[]>(base, API_PATHS.memories),
+      forgetMemory: (id) => call<void>(base, `${API_PATHS.memories}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
       listJobs: async () => notRegistered('A jobs endpoint'),
       listFindings: async () => notRegistered('A findings endpoint'),
-      listConnectors: async () => notRegistered('GET /api/v1/connectors'),
+      listGithubRepos: () => call<GitHubRepository[]>(base, API_PATHS.githubRepos),
+      listGithubIssues: (repo) => call<GitHubIssue[]>(base, `${API_PATHS.githubRepos}/${repoPath(repo)}/issues`),
+      listGithubPulls: (repo) => call<GitHubPullRequest[]>(base, `${API_PATHS.githubRepos}/${repoPath(repo)}/pulls`),
+      listGithubRuns: (repo) => call<GitHubWorkflowRun[]>(base, `${API_PATHS.githubRepos}/${repoPath(repo)}/runs`),
+      listCalendarEvents: (start, end, timezone) => call<CalendarEvent[]>(base, `${API_PATHS.calendarEvents}?${new URLSearchParams({ start, end, timezone })}`),
+      listNotes: () => call<Note[]>(base, API_PATHS.notes),
+      createNote: (title, content) => call<Note>(base, API_PATHS.notes, { method: 'POST', body: JSON.stringify({ title, content }) }),
+      updateNote: (id, title, content) => call<Note>(base, `${API_PATHS.notes}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ title, content }) }),
+      deleteNote: (id) => call<void>(base, `${API_PATHS.notes}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     };
   }
 
-  // ---- Mock mode: every record is simulated and labelled as such by the UI. ----
   const ok = (ms: number): Probe => ({ state: 'ok', ms });
   const memories = seedMemories();
+  const notes: Note[] = [
+    { id: 'note_001', title: 'MVP principles', content: 'Policy validation never executes an action. GitHub and Calendar stay read-only.', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { id: 'note_002', title: 'Review queue', content: 'Check pending policy decisions before the next demo.', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  ];
+  const repos: GitHubRepository[] = [{ full_name: 'octo-org/sample-repo', name: 'sample-repo', owner: 'octo-org', private: false }];
+  const calendarEvents: CalendarEvent[] = [
+    { id: 'event_001', summary: 'Platform team sync', start: new Date(Date.now() + 3_600_000).toISOString(), end: new Date(Date.now() + 5_400_000).toISOString(), timezone: 'Asia/Kolkata' },
+  ];
+  const requireApproval = (reason: ActionValidation['reason'] = 'approval_required'): ActionValidation => ({ status: 'require_approval', reason, action_hash: hash(), risk: 'medium' });
+  const mockActionResult = (action: ProposedAction): ActionValidation => {
+    switch (action.tool_name) {
+      case 'github.read_workflow_runs':
+        return { status: 'allow', reason: 'allowed', action_hash: hash(), risk: 'low' };
+      case 'notes.delete':
+      case 'notes.update':
+        return requireApproval();
+      default:
+        return { status: 'deny', reason: 'unknown_tool', action_hash: null, risk: null };
+    }
+  };
   return {
     mode,
-    support: { health: 'simulated', actions: 'simulated', chat: 'simulated', overview: 'simulated', memory: 'simulated', jobs: 'simulated', guardian: 'simulated', integrations: 'simulated' },
+    support: { health: 'simulated', actions: 'simulated', chat: 'simulated', memory: 'simulated', jobs: 'simulated', guardian: 'simulated', integrations: 'simulated' },
     async health() {
       await delay(200);
-      return { ok: true, data: { health: ok(4), ready: ok(11), checkedAt: new Date().toISOString(), simulated: true } };
+      return { ok: true, data: {
+        health: ok(4), ready: ok(11), principalCheck: ok(7),
+        principal: { id: 'demo-user', display_name: 'Demo operator', authenticated: true },
+        checkedAt: new Date().toISOString(), simulated: true,
+      } };
     },
-    async validateAction(a: ProposedAction): Promise<Result<ActionValidation>> {
+    async validateAction(action) {
       await delay(350);
-      const tool = a.tool_name.trim();
-      if (!/^(notes|github)\./.test(tool)) return { ok: true, data: { status: 'deny', reason: 'unknown_tool', action_hash: null, risk: null } };
-      if (tool.startsWith('notes.') || /\.(read|list)/.test(tool)) return { ok: true, data: { status: 'allow', reason: 'allowed', action_hash: hash(), risk: 'low' } };
-      return { ok: true, data: { status: 'require_approval', reason: 'approval_required', action_hash: hash(), risk: 'medium' } };
+      return recordCheck(action, mockActionResult(action));
     },
+    recentPolicyChecks,
     async sendChat(message, conversationId): Promise<Result<ChatResponse>> {
       await delay(900);
       if (message.startsWith('/fail')) return { ok: false, kind: 'network', message: 'Simulated network failure. Retry to continue.' };
@@ -93,21 +156,6 @@ export function createApi(mode: DataMode, base: string): Api {
         proposed_actions: wantsAction ? [{ action_id: crypto.randomUUID(), tool_name: 'notes.delete', target_ref: 'note_001', arguments: { reason: 'User requested cleanup' }, purpose: 'Delete the note you mentioned.', requested_at: new Date().toISOString() }] : [],
       } };
     },
-    async overview() {
-      await delay(250);
-      const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
-      return { ok: true, data: {
-        approvals: [
-          { id: 'sim-1', tool_name: 'notes.delete', target_ref: 'note_001', requested_at: ago(12) },
-          { id: 'sim-2', tool_name: 'github.read_workflow_runs', target_ref: 'octo-org/sample-repo', requested_at: ago(95) },
-        ],
-        activity: [
-          { id: 'a1', text: 'Validated notes.delete: needs approval', at: ago(12) },
-          { id: 'a2', text: 'Validated notes.create: allowed', at: ago(41) },
-          { id: 'a3', text: 'Memory recall answered a question about your Python preference', at: ago(180) },
-        ],
-      } };
-    },
     async listMemories() { await delay(300); return { ok: true, data: memories.map((m) => ({ ...m })) }; },
     async forgetMemory(id) {
       await delay(400);
@@ -118,6 +166,34 @@ export function createApi(mode: DataMode, base: string): Api {
     },
     async listJobs() { await delay(300); return { ok: true, data: seedJobs() }; },
     async listFindings() { await delay(300); return { ok: true, data: seedFindings() }; },
-    async listConnectors() { await delay(200); return { ok: true, data: seedConnectors() }; },
+    async listGithubRepos() { await delay(180); return { ok: true, data: repos.map((repo) => ({ ...repo })) }; },
+    async listGithubIssues() { await delay(240); return { ok: true, data: [{ number: 14, title: 'Tighten API response validation', state: 'open' }] }; },
+    async listGithubPulls() { await delay(240); return { ok: true, data: [{ number: 18, title: 'Add connector read views', state: 'open', draft: false }] }; },
+    async listGithubRuns() { await delay(240); return { ok: true, data: [{ id: 103, name: 'CI', status: 'completed', conclusion: 'success', created_at: new Date().toISOString() }] }; },
+    async listCalendarEvents() { await delay(200); return { ok: true, data: calendarEvents.map((event) => ({ ...event })) }; },
+    async listNotes() { await delay(160); return { ok: true, data: notes.map((note) => ({ ...note })) }; },
+    async createNote(title, content) {
+      await delay(180);
+      const now = new Date().toISOString();
+      const note = { id: `note_${crypto.randomUUID()}`, title, content, created_at: now, updated_at: now };
+      notes.unshift(note);
+      return { ok: true, data: { ...note } };
+    },
+    async updateNote(id, title, content) {
+      await delay(180);
+      const note = notes.find((item) => item.id === id);
+      if (!note) return { ok: false, kind: 'invalid', message: 'That note no longer exists.' };
+      note.title = title;
+      note.content = content;
+      note.updated_at = new Date().toISOString();
+      return { ok: true, data: { ...note } };
+    },
+    async deleteNote(id) {
+      await delay(180);
+      const index = notes.findIndex((item) => item.id === id);
+      if (index < 0) return { ok: false, kind: 'invalid', message: 'That note no longer exists.' };
+      notes.splice(index, 1);
+      return { ok: true, data: undefined };
+    },
   };
 }

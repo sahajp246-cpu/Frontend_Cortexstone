@@ -3,6 +3,17 @@ import type { DataMode } from './api/types';
 export interface Config { mode: DataMode; apiBase: string; error: string | null }
 interface RawEnv { VITE_DATA_MODE?: string; VITE_API_BASE_URL?: string }
 
+export const API_PATHS = {
+  health: '/health',
+  ready: '/ready',
+  principal: '/api/v1/me',
+  validateAction: '/api/v1/actions/validate',
+  memories: '/api/v1/memories',
+  githubRepos: '/api/v1/connectors/github/repos',
+  calendarEvents: '/api/v1/connectors/calendar/events',
+  notes: '/api/v1/notes',
+} as const;
+
 const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 const invalid = (error: string): Config => ({ mode: 'mock', apiBase: '', error });
 
