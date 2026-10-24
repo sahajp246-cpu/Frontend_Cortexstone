@@ -1,6 +1,6 @@
 import { seedFindings, seedJobs, seedMemories } from './mock-data';
 import type {
-  ActionValidation, Api, CalendarEvent, ChatResponse, DataMode, Failure, GitHubIssue,
+  ActionValidation, Api, CalendarEvent, ChatResponse, CreateMemory, DataMode, DemoScenario, Failure, GitHubIssue,
   GitHubPullRequest, GitHubRepository, GitHubWorkflowRun, HealthSnapshot, MemoryRecord, Note,
   PolicyCheck, Principal, Probe, ProposedAction, Result,
 } from './types';
@@ -12,6 +12,7 @@ function kindFor(status: number): Failure['kind'] {
   if (status === 401) return 'unauthenticated';
   if (status === 403) return 'forbidden';
   if (status === 404 || status === 405 || status === 501 || status === 503) return 'unavailable';
+  if (status === 429) return 'rate_limited';
   if (status >= 500) return 'server';
   return 'invalid';
 }
@@ -24,10 +25,15 @@ async function call<T>(base: string, path: string, init?: RequestInit): Promise<
     const res = await fetch(base + path, { ...init, signal: ctl.signal, headers: { 'Content-Type': 'application/json', ...init?.headers } });
     const body: unknown = await res.json().catch(() => null);
     if (res.ok) return { ok: true, data: body as T };
-    const env = body as { error?: { message?: unknown }; request_id?: unknown } | null;
+    const env = body as {
+      error?: { code?: unknown; message?: unknown; details?: unknown; request_id?: unknown };
+      request_id?: unknown;
+    } | null;
     const message = typeof env?.error?.message === 'string' ? env.error.message : 'The request could not be completed.';
-    const requestId = typeof env?.request_id === 'string' ? env.request_id : res.headers.get('X-Request-ID') ?? undefined;
-    return { ok: false, kind: kindFor(res.status), message, status: res.status, requestId };
+    const requestId = typeof env?.error?.request_id === 'string' ? env.error.request_id
+      : typeof env?.request_id === 'string' ? env.request_id : res.headers.get('X-Request-ID') ?? undefined;
+    const code = typeof env?.error?.code === 'string' ? env.error.code : undefined;
+    return { ok: false, kind: kindFor(res.status), message, code, details: env?.error?.details, status: res.status, requestId };
   } catch {
     return { ok: false, kind: 'network', message: 'Could not reach the API. Check that the backend is running and the base URL is correct.' };
   } finally {
@@ -42,7 +48,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const hash = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 const repoPath = (repo: string) => repo.split('/').map(encodeURIComponent).join('/');
 
-export function createApi(mode: DataMode, base: string): Api {
+export function createApi(mode: DataMode, base: string, scenario: DemoScenario = 'normal'): Api {
   const checks: PolicyCheck[] = [];
   const recordCheck = (action: ProposedAction, result: ActionValidation) => {
     checks.unshift({ action, result, at: new Date().toISOString() });
@@ -91,6 +97,7 @@ export function createApi(mode: DataMode, base: string): Api {
       recentPolicyChecks,
       sendChat: async () => notRegistered('POST /api/v1/chat'),
       listMemories: () => call<MemoryRecord[]>(base, API_PATHS.memories),
+      createMemory: (memory: CreateMemory) => call<MemoryRecord>(base, API_PATHS.memories, { method: 'POST', body: JSON.stringify(memory) }),
       forgetMemory: (id) => call<void>(base, `${API_PATHS.memories}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
       listJobs: async () => notRegistered('A jobs endpoint'),
       listFindings: async () => notRegistered('A findings endpoint'),
@@ -128,7 +135,7 @@ export function createApi(mode: DataMode, base: string): Api {
         return { status: 'deny', reason: 'unknown_tool', action_hash: null, risk: null };
     }
   };
-  return {
+  const mockApi: Api = {
     mode,
     support: { health: 'simulated', actions: 'simulated', chat: 'simulated', memory: 'simulated', jobs: 'simulated', guardian: 'simulated', integrations: 'simulated' },
     async health() {
@@ -157,6 +164,15 @@ export function createApi(mode: DataMode, base: string): Api {
       } };
     },
     async listMemories() { await delay(300); return { ok: true, data: memories.map((m) => ({ ...m })) }; },
+    async createMemory(memory) {
+      await delay(180);
+      const created: MemoryRecord = {
+        id: `m_${crypto.randomUUID()}`, content: memory.content, kind: memory.kind,
+        source: 'User', inferred: false, confidence: 1, createdAt: new Date().toISOString(),
+      };
+      memories.unshift(created);
+      return { ok: true, data: { ...created } };
+    },
     async forgetMemory(id) {
       await delay(400);
       const i = memories.findIndex((m) => m.id === id);
@@ -195,5 +211,54 @@ export function createApi(mode: DataMode, base: string): Api {
       notes.splice(index, 1);
       return { ok: true, data: undefined };
     },
+  };
+  if (scenario === 'normal') return mockApi;
+
+  const scenarioFailure = (selected: DemoScenario): Failure => {
+    if (selected === 'unauthenticated') return { ok: false, kind: 'unauthenticated', status: 401, code: 'unauthenticated', message: 'Sign in to continue.' };
+    if (selected === 'forbidden') return { ok: false, kind: 'forbidden', status: 403, code: 'forbidden', message: 'Your account cannot access this resource.' };
+    if (selected === 'reauth') return { ok: false, kind: 'unauthenticated', status: 401, code: 'reauthentication_required', message: 'Reconnect your account to continue.' };
+    return { ok: false, kind: 'unavailable', status: 503, code: 'service_unavailable', message: 'The backend is currently unavailable.' };
+  };
+  const gate = async <T,>(operation: () => Promise<Result<T>>): Promise<Result<T>> => {
+    if (scenario !== 'empty' && scenario !== 'loading') return scenarioFailure(scenario);
+    if (scenario === 'loading') await delay(15000);
+    const result = await operation();
+    if (scenario === 'empty' && result.ok && Array.isArray(result.data)) return { ok: true, data: [] as T };
+    return result;
+  };
+  return {
+    ...mockApi,
+    health: async () => {
+      if (scenario === 'loading') await delay(15000);
+      const result = await mockApi.health();
+      if (!result.ok || scenario === 'empty' || scenario === 'loading') return result;
+      const unavailable = scenario === 'outage';
+      const state: Probe['state'] = unavailable ? 'unreachable' : 'degraded';
+      const detail = scenarioFailure(scenario).message;
+      return { ok: true, data: {
+        ...result.data,
+        health: { state, detail },
+        ready: { state, detail },
+        principalCheck: { state, detail },
+        principal: null,
+      } };
+    },
+    validateAction: (action) => gate(() => mockApi.validateAction(action)),
+    sendChat: (message, conversationId) => gate(() => mockApi.sendChat(message, conversationId)),
+    listMemories: () => gate(mockApi.listMemories),
+    createMemory: (memory) => gate(() => mockApi.createMemory(memory)),
+    forgetMemory: (id) => gate(() => mockApi.forgetMemory(id)),
+    listJobs: () => gate(mockApi.listJobs),
+    listFindings: () => gate(mockApi.listFindings),
+    listGithubRepos: () => gate(mockApi.listGithubRepos),
+    listGithubIssues: (repo) => gate(() => mockApi.listGithubIssues(repo)),
+    listGithubPulls: (repo) => gate(() => mockApi.listGithubPulls(repo)),
+    listGithubRuns: (repo) => gate(() => mockApi.listGithubRuns(repo)),
+    listCalendarEvents: (start, end, timezone) => gate(() => mockApi.listCalendarEvents(start, end, timezone)),
+    listNotes: () => gate(mockApi.listNotes),
+    createNote: (title, content) => gate(() => mockApi.createNote(title, content)),
+    updateNote: (id, title, content) => gate(() => mockApi.updateNote(id, title, content)),
+    deleteNote: (id) => gate(() => mockApi.deleteNote(id)),
   };
 }

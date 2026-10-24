@@ -17,6 +17,16 @@ describe('live mode', () => {
     expect(r).toMatchObject({ ok: false, kind: 'unavailable', status: 503, requestId: 'r1', message: 'Not configured.' });
     expect(JSON.stringify(r)).not.toContain('SECRET');
   });
+  it('preserves nested error details and request id for rate limits', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: { code: 'rate_limited', message: 'Try again later.', details: { retry_after: 12 }, request_id: 'request-42' },
+    }), { status: 429 })));
+    const result = await createApi('live', '').validateAction(sample);
+    expect(result).toMatchObject({
+      ok: false, kind: 'rate_limited', status: 429, code: 'rate_limited',
+      message: 'Try again later.', details: { retry_after: 12 }, requestId: 'request-42',
+    });
+  });
   it('reports network failure honestly instead of falling back to mock', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('down'); }));
     const h = await createApi('live', '').health();
@@ -67,6 +77,19 @@ describe('live mode', () => {
       '/api/v1/connectors/github/repos/octo-org/sample-repo/pulls',
       '/api/v1/connectors/github/repos/octo-org/sample-repo/runs',
     ]);
+  });
+  it('creates memories through the contract endpoint without a browser user id', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      id: 'memory-1', content: 'Prefers concise summaries', kind: 'preference', source: 'user',
+      inferred: false, confidence: 1, createdAt: '2026-10-30T00:00:00Z',
+    }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await createApi('live', '').createMemory({ content: 'Prefers concise summaries', kind: 'preference' });
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/memories', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ content: 'Prefers concise summaries', kind: 'preference' }),
+    }));
   });
 });
 

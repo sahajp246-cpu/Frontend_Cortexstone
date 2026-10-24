@@ -1,4 +1,5 @@
 export type DataMode = 'mock' | 'live';
+export type DemoScenario = 'normal' | 'loading' | 'empty' | 'unauthenticated' | 'forbidden' | 'reauth' | 'outage';
 export type PolicyStatus = 'allow' | 'deny' | 'require_approval';
 export type PolicyReason =
   | 'allowed' | 'unknown_tool' | 'target_not_allowlisted' | 'permission_missing' | 'invalid_arguments'
@@ -16,10 +17,17 @@ export interface ProposedAction {
 }
 export interface ActionValidation { status: PolicyStatus; reason: PolicyReason; action_hash: string | null; risk: RiskLevel | null }
 export interface PolicyCheck { action: ProposedAction; result: ActionValidation; at: string }
-export interface ChatResponse { conversation_id: string | null; answer: string | null; proposed_actions: ProposedAction[] }
+export interface ChatResponse {
+  conversation_id: string | null;
+  answer: string | null;
+  proposed_actions: ProposedAction[];
+  model?: string | null;
+  memory_used?: string[];
+  connectors_used?: string[];
+}
 
-export type FailureKind = 'unavailable' | 'unauthenticated' | 'forbidden' | 'invalid' | 'network' | 'server';
-export interface Failure { ok: false; kind: FailureKind; message: string; status?: number; requestId?: string }
+export type FailureKind = 'unavailable' | 'unauthenticated' | 'forbidden' | 'invalid' | 'rate_limited' | 'network' | 'server';
+export interface Failure { ok: false; kind: FailureKind; message: string; code?: string; details?: unknown; status?: number; requestId?: string }
 export type Result<T> = { ok: true; data: T } | Failure;
 
 export interface Probe { state: 'ok' | 'degraded' | 'unreachable'; detail?: string; ms?: number }
@@ -33,8 +41,9 @@ export interface HealthSnapshot {
   simulated: boolean;
 }
 
-export type MemoryKind = 'fact' | 'episode' | 'skill';
+export type MemoryKind = 'fact' | 'preference' | 'context' | 'episode' | 'skill';
 export interface MemoryRecord { id: string; content: string; kind: MemoryKind; source: string; inferred: boolean; confidence: number; createdAt: string }
+export interface CreateMemory { content: string; kind: MemoryKind }
 export type JobStatus = 'queued' | 'running' | 'retry_wait' | 'awaiting_approval' | 'succeeded' | 'failed' | 'cancelled';
 export interface JobRecord { id: string; name: string; status: JobStatus; startedAt: string; durationS: number | null; attempts: number; outcome: string }
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
@@ -57,6 +66,7 @@ export interface Api {
   recentPolicyChecks(): PolicyCheck[];
   sendChat(message: string, conversationId: string | null): Promise<Result<ChatResponse>>;
   listMemories(): Promise<Result<MemoryRecord[]>>;
+  createMemory(memory: CreateMemory): Promise<Result<MemoryRecord>>;
   forgetMemory(id: string): Promise<Result<void>>;
   listJobs(): Promise<Result<JobRecord[]>>;
   listFindings(): Promise<Result<Finding[]>>;

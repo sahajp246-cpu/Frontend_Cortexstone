@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from
 import { ArrowUpRight, CheckCheck, FileJson2, MessageSquareText, Radio, Search, ShieldCheck } from 'lucide-react';
 import { api, useHealth } from '../app-context';
 import type { CalendarEvent, Failure, GitHubRepository, MemoryRecord, Note, PolicyCheck, Result } from '../api/types';
-import { Modal } from '../dialog';
+import { ConfirmDialog, Modal } from '../dialog';
+import { useToast } from '../toast';
 import { Banner, BentoCard, Empty, PageHeader, fmtTime } from '../ui';
 
 interface Feed<T> { data: T[]; error: Failure | null; loading: boolean }
@@ -32,6 +33,9 @@ export default function Overview() {
   const [notes, setNotes] = useState<Feed<Note>>(emptyFeed);
   const [checks, setChecks] = useState<PolicyCheck[]>([]);
   const [inspect, setInspect] = useState<PolicyCheck | null>(null);
+  const [forgetTarget, setForgetTarget] = useState<MemoryRecord | null>(null);
+  const [forgetting, setForgetting] = useState(false);
+  const toast = useToast();
   const [now] = useState(() => Date.now());
   const start = useMemo(() => new Date(now).toISOString(), [now]);
   const end = useMemo(() => new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString(), [now]);
@@ -56,9 +60,24 @@ export default function Overview() {
 
   function openChat(event: FormEvent) {
     event.preventDefault();
-    const query = prompt.trim();
+    jumpToChat(prompt);
+  }
+
+  function jumpToChat(value: string) {
+    const query = value.trim();
     if (!query) return;
     location.hash = `#/chat?prompt=${encodeURIComponent(query)}`;
+  }
+
+  async function forgetMemory() {
+    if (!forgetTarget || forgetting) return;
+    setForgetting(true);
+    const result = await api.forgetMemory(forgetTarget.id);
+    setForgetting(false);
+    if (!result.ok) { toast('bad', `Couldn't forget this memory. ${result.message}`); return; }
+    setMemories((current) => ({ ...current, data: current.data.filter((memory) => memory.id !== forgetTarget.id) }));
+    setForgetTarget(null);
+    toast('ok', 'Memory forgotten.');
   }
 
   const health = snap?.health;
@@ -77,6 +96,10 @@ export default function Overview() {
         <span className="quick-hint">Open chat <kbd>↵</kbd></span>
         <button className="btn primary" type="submit" disabled={!prompt.trim()}><Search size={15} />Ask</button>
       </form>
+      <div className="quick-chips" aria-label="Suggested prompts">
+        <button className="quick-chip" onClick={() => jumpToChat("Summarize open PRs & today's calendar")}>Summarize open PRs &amp; today's calendar</button>
+        <button className="quick-chip" onClick={() => jumpToChat('Validate note deletion policy')}>Validate note deletion policy</button>
+      </div>
 
       <div className="bento-grid">
         <BentoCard className="bento-telemetry" aria-labelledby="telemetry-title">
@@ -104,20 +127,6 @@ export default function Overview() {
           {(repos.error || events.error || notes.error) && <p className="connector-warning">{[repos.error, events.error, notes.error].filter(Boolean).map((error) => error?.message).join(' ')}</p>}
         </BentoCard>
 
-        <BentoCard className="bento-memory" aria-labelledby="memory-title">
-          <header className="bento-heading"><div><span className="eyebrow">OWNER-SCOPED</span><h2 id="memory-title">Memory provenance</h2></div><a className="text-link" href="#/memory">All memory <ArrowUpRight size={14} /></a></header>
-          {memories.loading ? <p className="body muted">Loading owner-scoped memories…</p> : memories.data.length ? (
-            <ul className="provenance-list">{memories.data.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 4).map((memory, index) => (
-              <li key={memory.id} style={{ '--stagger-index': index } as CSSProperties}>
-                <div className="provenance-meta"><span className={`source-tag ${memory.inferred ? 'inferred' : 'user'}`}>{memory.inferred ? 'INFERRED' : 'USER'}</span><span className="confidence">{Math.round(memory.confidence * 100)}%</span></div>
-                <p>{memory.content}</p>
-                <div className="confidence-track"><i style={{ width: `${Math.round(memory.confidence * 100)}%` }} /></div>
-                <time>{fmtTime(memory.createdAt)}</time>
-              </li>
-            ))}</ul>
-          ) : <Empty title={memories.error ? 'Memory unavailable' : 'No memories yet'}>{memories.error?.message ?? 'Owner-scoped memories will appear here with their provenance.'}</Empty>}
-        </BentoCard>
-
         <BentoCard className="bento-policy" aria-labelledby="policy-title">
           <header className="bento-heading"><div><span className="eyebrow">POLICY GATE</span><h2 id="policy-title">Validation checks</h2></div><a className="text-link" href="#/actions">Validate action <ArrowUpRight size={14} /></a></header>
           <Banner tone="warn" title="Policy validation only">POST /api/v1/actions/validate evaluates policy. It does not approve or execute actions.</Banner>
@@ -131,11 +140,29 @@ export default function Overview() {
           ))}</ul> : <Empty title="No checks in this session">Validated proposals show here. Each check is temporary and has no execution side effect.</Empty>}
           <div className="policy-footer"><CheckCheck size={14} /> No action is run from this view.</div>
         </BentoCard>
+
+        <BentoCard className="bento-memory" aria-labelledby="memory-title">
+          <header className="bento-heading"><div><span className="eyebrow">OWNER-SCOPED</span><h2 id="memory-title">Memory provenance</h2></div><a className="text-link" href="#/memory">All memory <ArrowUpRight size={14} /></a></header>
+          {memories.loading ? <p className="body muted">Loading owner-scoped memories…</p> : memories.data.length ? <>
+            <div className="memory-ticker">{memories.data.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 3).map((memory, index) => (
+              <article className="memory-ticker-item" key={memory.id} style={{ '--stagger-index': index } as CSSProperties}>
+                <div className="memory-ticker-meta"><span className={`source-tag ${memory.inferred ? 'inferred' : 'user'}`}>{memory.inferred ? 'INFERRED' : 'USER'}</span><span>{Math.round(memory.confidence * 100)}%</span></div>
+                <p>{memory.content}</p>
+                <div className="memory-segments" role="img" aria-label={`Confidence ${Math.round(memory.confidence * 100)} percent`}>{Array.from({ length: 10 }, (_, segment) => <i className={segment < Math.round(memory.confidence * 10) ? 'filled' : ''} key={segment} />)}</div>
+                <div className="memory-ticker-meta"><time>{fmtTime(memory.createdAt)}</time><button className="quick-forget" onClick={() => setForgetTarget(memory)}>FORGET</button></div>
+              </article>
+            ))}</div>
+            <div className="memory-source-bars"><span>USER {memories.data.filter((memory) => !memory.inferred).length}</span><div className="source-meter"><i className="user-segment" style={{ width: `${memories.data.length ? memories.data.filter((memory) => !memory.inferred).length / memories.data.length * 100 : 0}%` }} /><i className="inferred-segment" style={{ width: `${memories.data.length ? memories.data.filter((memory) => memory.inferred).length / memories.data.length * 100 : 0}%` }} /></div><span>INFERRED {memories.data.filter((memory) => memory.inferred).length}</span></div>
+          </> : <Empty title={memories.error ? 'Memory unavailable' : 'No memories yet'}>{memories.error?.message ?? 'Owner-scoped memories will appear here with their provenance.'}</Empty>}
+        </BentoCard>
       </div>
 
       <Modal open={inspect !== null} title="Validation payload" onClose={() => setInspect(null)}>
         {inspect && <><p className="muted modal-intro">Policy validation is not execution. This JSON stays in this browser session.</p><pre>{JSON.stringify({ action: inspect.action, validation: inspect.result, validated_at: inspect.at }, null, 2)}</pre></>}
       </Modal>
+      <ConfirmDialog open={forgetTarget !== null} title="Forget this memory?" confirmLabel="Forget memory" busy={forgetting} onConfirm={() => void forgetMemory()} onCancel={() => setForgetTarget(null)}>
+        <p>{forgetTarget?.content}</p><p className="muted" style={{ marginTop: 8 }}>This removes it from the owner-scoped memory store.</p>
+      </ConfirmDialog>
     </div>
   );
 }

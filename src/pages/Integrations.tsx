@@ -8,7 +8,7 @@ import { LoadError, Loading } from '../states';
 import { Badge, Empty, PageHeader } from '../ui';
 
 type ConnectorTab = 'github' | 'calendar' | 'notes';
-type GitHubView = 'issues' | 'pulls' | 'runs';
+type GitHubView = 'repos' | 'issues' | 'pulls' | 'runs';
 
 const connectorTabs: { id: ConnectorTab; label: string; icon: typeof Github }[] = [
   { id: 'github', label: 'GitHub', icon: Github },
@@ -16,6 +16,7 @@ const connectorTabs: { id: ConnectorTab; label: string; icon: typeof Github }[] 
   { id: 'notes', label: 'Cortexstone Notes', icon: NotebookPen },
 ];
 const githubViews: { id: GitHubView; label: string }[] = [
+  { id: 'repos', label: 'Repositories' },
   { id: 'issues', label: 'Issues' }, { id: 'pulls', label: 'Pull requests' }, { id: 'runs', label: 'Workflow runs' },
 ];
 const repoDefault = 'octo-org/sample-repo';
@@ -38,12 +39,12 @@ function describeError<T>(result: { ok: true; data: T } | Failure, setter: (fail
 export default function Integrations() {
   const toast = useToast();
   const [tab, setTab] = useState<ConnectorTab>(selectedTab);
-  const [githubView, setGithubView] = useState<GitHubView>('issues');
+  const [githubView, setGithubView] = useState<GitHubView>('repos');
   const [repos, setRepos] = useState<GitHubRepository[]>([]);
   const [repoError, setRepoError] = useState<Failure | null>(null);
   const [repoLoading, setRepoLoading] = useState(true);
   const [repo, setRepo] = useState(repoDefault);
-  const [githubData, setGithubData] = useState<(GitHubIssue | GitHubPullRequest | GitHubWorkflowRun)[]>([]);
+  const [githubData, setGithubData] = useState<(GitHubRepository | GitHubIssue | GitHubPullRequest | GitHubWorkflowRun)[]>([]);
   const [githubError, setGithubError] = useState<Failure | null>(null);
   const [githubLoading, setGithubLoading] = useState(false);
   const [startDate, setStartDate] = useState(isoDate(0));
@@ -74,6 +75,12 @@ export default function Integrations() {
 
   useEffect(() => {
     if (tab !== 'github') return;
+    if (githubView === 'repos') {
+      setGithubLoading(repoLoading);
+      setGithubError(repoError);
+      setGithubData(repos);
+      return;
+    }
     setGithubLoading(true);
     setGithubError(null);
     const request = githubView === 'issues' ? api.listGithubIssues(repo)
@@ -84,7 +91,7 @@ export default function Integrations() {
       if (!result.ok) setGithubError(result);
       else { setGithubError(null); setGithubData(result.data); }
     });
-  }, [tab, githubView, repo]);
+  }, [tab, githubView, repo, repos, repoError, repoLoading]);
 
   useEffect(() => {
     if (tab !== 'calendar') return;
@@ -152,9 +159,37 @@ export default function Integrations() {
     toast('ok', 'Note deleted.');
   }
 
+  function retryGithub() {
+    setGithubLoading(true);
+    setGithubError(null);
+    if (githubView === 'repos') {
+      void api.listGithubRepos().then((result) => {
+        setGithubLoading(false);
+        if (!result.ok) { setGithubError(result); return; }
+        setRepos(result.data);
+        setGithubData(result.data);
+      });
+      return;
+    }
+    const request = githubView === 'issues' ? api.listGithubIssues(repo)
+      : githubView === 'pulls' ? api.listGithubPulls(repo)
+        : api.listGithubRuns(repo);
+    void request.then((result) => {
+      setGithubLoading(false);
+      if (!result.ok) setGithubError(result);
+      else setGithubData(result.data);
+    });
+  }
+
   return (
     <div className="page integrations-page">
       <PageHeader title="Connectors & data" sub="Read from connected providers. Manage Cortexstone Notes here." />
+      <div className="connector-studio-cards">
+        <article className="connector-studio-card"><header><strong><Github size={14} /> GitHub</strong><span className="readonly">READ ONLY</span></header><p>Repositories, issues, pull requests, workflow runs</p><footer><span className={repoError ? 'readonly' : 'connected'}>{repoLoading ? 'CHECKING' : repoError ? 'UNAVAILABLE' : `${repos.length} REPOSITORIES`}</span><button className="btn" onClick={() => { setTab('github'); setGithubView('repos'); }}>Inspect</button></footer></article>
+        <article className="connector-studio-card"><header><strong><CalendarDays size={14} /> Google Calendar</strong><span className="readonly">READ ONLY</span></header><p>Events queried in Asia/Kolkata</p><footer><span className={calendarError ? 'readonly' : 'connected'}>{calendarLoading ? 'CHECKING' : calendarError ? 'UNAVAILABLE' : `${events.length} EVENTS`}</span><button className="btn" onClick={() => setTab('calendar')}>Inspect</button></footer></article>
+        <article className="connector-studio-card"><header><strong><NotebookPen size={14} /> Cortexstone Notes</strong><span className="connected">BUILT-IN CRUD</span></header><p>Create, edit, and delete owner-scoped notes</p><footer><span className={notesError ? 'readonly' : 'connected'}>{notesLoading ? 'CHECKING' : notesError ? 'UNAVAILABLE' : `${notes.length} NOTES`}</span><button className="btn" onClick={() => setTab('notes')}>Open studio</button></footer></article>
+      </div>
+      <p className="integration-note">Provider connect and disconnect controls are not exposed by this API. GitHub and Calendar remain read-only; no OAuth behavior is simulated here.</p>
       <nav className="connector-tabs" aria-label="Connector views">
         {connectorTabs.map(({ id, label, icon: Icon }) => <button key={id} className={`connector-tab ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}><Icon size={16} />{label}</button>)}
       </nav>
@@ -178,11 +213,17 @@ export default function Integrations() {
               <div className="inner-tabs" role="tablist" aria-label="GitHub repository data">
                 {githubViews.map(({ id, label }) => <button role="tab" aria-selected={githubView === id} key={id} className={githubView === id ? 'active' : ''} onClick={() => setGithubView(id)}>{label}</button>)}
               </div>
-              {githubLoading ? <Loading what={githubView} /> : githubError ? <LoadError error={githubError} onRetry={() => { setGithubLoading(true); const request = githubView === 'issues' ? api.listGithubIssues(repo) : githubView === 'pulls' ? api.listGithubPulls(repo) : api.listGithubRuns(repo); void request.then((result) => { setGithubLoading(false); if (!result.ok) setGithubError(result); else { setGithubError(null); setGithubData(result.data); } }); }} /> : githubData.length === 0 ? <Empty title={`No ${githubView} found`}>No data is available for {repo}.</Empty> : (
+              {githubLoading ? <Loading what={githubView} /> : githubError ? <LoadError error={githubError} onRetry={retryGithub} /> : githubData.length === 0 ? <Empty title={`No ${githubView} found`}>No data is available for {repo}.</Empty> : (
                 <ul className="explorer-list">{githubData.map((item, index) => {
-                  const run = 'name' in item ? item : null;
-                  const row = run ? `${run.name} · ${run.conclusion ?? run.status}` : `${'number' in item ? `#${item.number} ` : ''}${'title' in item ? item.title : ''} · ${'state' in item ? item.state : ''}`;
-                  return <li key={run?.id ?? ('number' in item ? item.number : index)}><span>{row}</span><span className="muted mono">{run?.created_at ? new Date(run.created_at).toLocaleString() : ''}</span></li>;
+                  const repository = 'full_name' in item;
+                  const run = 'conclusion' in item && 'created_at' in item ? item : null;
+                  const key = repository ? item.full_name : run?.id ?? ('number' in item ? item.number : index);
+                  return <li key={key}>
+                    <span>{repository ? <>{item.full_name}<small className="muted"> · {item.private ? 'Private' : 'Public'}</small></> : run ? run.name : <>{'number' in item ? `#${item.number} ` : ''}{'title' in item ? item.title : ''} · {'state' in item ? item.state : ''}</>}</span>
+                    {!repository && 'draft' in item && item.draft && <Badge>Draft</Badge>}
+                    {run && <Badge tone={run.conclusion === 'success' ? 'ok' : run.conclusion === 'failure' ? 'bad' : 'neutral'}>{run.conclusion ?? run.status}</Badge>}
+                    <span className="muted mono">{run?.created_at ? new Date(run.created_at).toLocaleString() : ''}</span>
+                  </li>;
                 })}</ul>
               )}
             </>
